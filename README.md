@@ -1,12 +1,14 @@
 # Card Assistant — LLM Chat for Anki
 
-A side-panel chat assistant that lets you ask questions about your flashcards while reviewing. Connects to **OpenRouter** (hundreds of models) or a local **Ollama** instance.
+**Add-on Code:** `940044876` — [ankiweb.net/shared/info/940044876](https://ankiweb.net/shared/info/940044876)
+
+A side-panel chat assistant that lets you ask questions about your flashcards while reviewing. Connects to **OpenRouter** (hundreds of models), a local **Ollama** instance, or **Google Gemini** (free-tier models available).
 
 ## Features
 
 - Streams responses in a dockable side panel during review
 - Works with any note type — fields are extracted automatically
-- Supports OpenRouter and Ollama as providers, each remembering its own model
+- Supports OpenRouter, Ollama, and Gemini as providers, each remembering its own model
 - Markdown rendering (code blocks, lists, headings, etc.)
 - Customisable system prompt, temperature, max tokens, font size, and panel width
 - Context-aware: sends the current card's fields to the LLM automatically
@@ -40,6 +42,13 @@ Open **Tools > Add-ons > Card Assistant > Config** or click the gear icon in the
 4. Click "Refresh" to see your local models
 5. Click "Test Connection" to verify
 
+### Gemini
+1. Get a free API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+2. Select "Gemini" as provider
+3. Paste your API key
+4. Click "Refresh" to load available models, or type a model ID directly
+5. Click "Test Connection" to verify
+
 ## Usage
 
 1. Start reviewing cards — the panel appears automatically on the right
@@ -51,7 +60,7 @@ Open **Tools > Add-ons > Card Assistant > Config** or click the gear icon in the
 ## Requirements
 
 - Anki 2.1.50+
-- Internet connection (for OpenRouter) or a running Ollama server
+- Internet connection (for OpenRouter/Gemini) or a running Ollama server
 
 ## License
 
