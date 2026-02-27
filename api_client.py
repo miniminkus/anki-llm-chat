@@ -13,6 +13,8 @@ from aqt.qt import QThread, pyqtSignal
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/openai/models"
 
 
 class StreamWorker(QThread):
@@ -23,9 +25,11 @@ class StreamWorker(QThread):
     error_occurred = pyqtSignal(str)
 
     def __init__(self, api_key, model, messages, max_tokens=1024, temperature=0.7,
-                 provider="openrouter", ollama_url="http://localhost:11434"):
+                 provider="openrouter", ollama_url="http://localhost:11434",
+                 gemini_api_key=""):
         super().__init__()
         self.api_key = api_key
+        self.gemini_api_key = gemini_api_key
         self.model = model
         self.messages = messages
         self.max_tokens = max_tokens
@@ -51,6 +55,11 @@ class StreamWorker(QThread):
                 "API key not set. Open settings (\u2699) to configure."
             )
             return
+        if self.provider == "gemini" and not self.gemini_api_key:
+            self.error_occurred.emit(
+                "Gemini API key not set. Open settings (\u2699) to configure."
+            )
+            return
 
         payload = json.dumps({
             "model": self.model,
@@ -63,6 +72,12 @@ class StreamWorker(QThread):
         if self.provider == "ollama":
             url = f"{self.ollama_url}/v1/chat/completions"
             headers = {"Content-Type": "application/json"}
+        elif self.provider == "gemini":
+            url = GEMINI_API_URL
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.gemini_api_key}",
+            }
         else:
             url = OPENROUTER_API_URL
             headers = {
@@ -135,7 +150,8 @@ class StreamWorker(QThread):
             self.stream_finished.emit(full_response)
 
 
-def fetch_models(api_key, provider="openrouter", ollama_url="http://localhost:11434"):
+def fetch_models(api_key, provider="openrouter", ollama_url="http://localhost:11434",
+                 gemini_api_key=""):
     """Fetch available model IDs. Returns a sorted list."""
     ollama_url = ollama_url.rstrip("/")
 
@@ -145,6 +161,19 @@ def fetch_models(api_key, provider="openrouter", ollama_url="http://localhost:11
             with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return sorted(m["name"] for m in data.get("models", []))
+        except Exception:
+            return []
+    elif provider == "gemini":
+        if not gemini_api_key:
+            return []
+        req = urllib.request.Request(
+            GEMINI_MODELS_URL,
+            headers={"Authorization": f"Bearer {gemini_api_key}"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return sorted(m["id"] for m in data.get("data", []))
         except Exception:
             return []
     else:
@@ -163,7 +192,7 @@ def fetch_models(api_key, provider="openrouter", ollama_url="http://localhost:11
 
 
 def test_connection(api_key, provider="openrouter", ollama_url="http://localhost:11434",
-                    model=""):
+                    model="", gemini_api_key=""):
     """Test connectivity to the selected provider. Returns (ok, message).
 
     If *model* is given, sends a tiny chat completion to verify the key
@@ -185,6 +214,14 @@ def test_connection(api_key, provider="openrouter", ollama_url="http://localhost
             if provider == "ollama":
                 url = f"{ollama_url}/v1/chat/completions"
                 headers = {"Content-Type": "application/json"}
+            elif provider == "gemini":
+                if not gemini_api_key:
+                    return False, "Gemini API key is empty"
+                url = GEMINI_API_URL
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {gemini_api_key}",
+                }
             else:
                 if not api_key:
                     return False, "API key is empty"
@@ -207,6 +244,17 @@ def test_connection(api_key, provider="openrouter", ollama_url="http://localhost
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     count = len(data.get("models", []))
+                    return True, f"Connected \u2014 {count} model(s) available"
+            elif provider == "gemini":
+                if not gemini_api_key:
+                    return False, "Gemini API key is empty"
+                req = urllib.request.Request(
+                    GEMINI_MODELS_URL,
+                    headers={"Authorization": f"Bearer {gemini_api_key}"},
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    count = len(data.get("data", []))
                     return True, f"Connected \u2014 {count} model(s) available"
             else:
                 if not api_key:

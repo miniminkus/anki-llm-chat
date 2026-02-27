@@ -258,7 +258,13 @@ class ChatPanel(QDockWidget):
         provider = conf.get("provider", "openrouter")
         if provider == "ollama":
             return conf.get("ollama_model", "")
+        if provider == "gemini":
+            return conf.get("gemini_model", "gemini-2.5-flash")
         return conf.get("openrouter_model", conf.get("model", "deepseek/deepseek-v3.2"))
+
+    @staticmethod
+    def _provider_label(provider):
+        return {"ollama": "Ollama", "gemini": "Gemini"}.get(provider, "OpenRouter")
 
     # -- construction ------------------------------------------------------
 
@@ -301,7 +307,7 @@ class ChatPanel(QDockWidget):
         conf = self._conf()
         self._web = QWebEngineView()
         provider = conf.get("provider", "openrouter")
-        provider_label = "Ollama" if provider == "ollama" else "OpenRouter"
+        provider_label = self._provider_label(provider)
         html = (
             _CHAT_HTML
             .replace("FONT_SIZE", str(conf.get("font_size", 12)))
@@ -371,7 +377,7 @@ class ChatPanel(QDockWidget):
             model = self._active_model(conf)
             self._js(f'setModel("{_js(model)}");')
             provider = conf.get("provider", "openrouter")
-            provider_label = "Ollama" if provider == "ollama" else "OpenRouter"
+            provider_label = self._provider_label(provider)
             self._js(f'setProvider("{_js(provider_label)}");')
 
     # -- collapse / expand -------------------------------------------------
@@ -432,7 +438,7 @@ class ChatPanel(QDockWidget):
         model = self._active_model(conf)
         self._js(f'setModel("{_js(model)}");')
         provider = conf.get("provider", "openrouter")
-        provider_label = "Ollama" if provider == "ollama" else "OpenRouter"
+        provider_label = self._provider_label(provider)
         self._js(f'setProvider("{_js(provider_label)}");')
 
     def on_answer_shown(self, context: str):
@@ -483,6 +489,7 @@ class ChatPanel(QDockWidget):
             temperature=conf.get("temperature", 0.7),
             provider=conf.get("provider", "openrouter"),
             ollama_url=conf.get("ollama_url", "http://localhost:11434"),
+            gemini_api_key=conf.get("gemini_api_key", ""),
         )
         self._worker.chunk_received.connect(self._on_chunk)
         self._worker.stream_finished.connect(self._on_finished)

@@ -68,7 +68,7 @@ class ConfigDialog(QDialog):
 
         # Provider selector
         self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["OpenRouter", "Ollama"])
+        self.provider_combo.addItems(["OpenRouter", "Ollama", "Gemini"])
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         form.addRow("Provider:", self.provider_combo)
 
@@ -84,6 +84,13 @@ class ConfigDialog(QDialog):
         self.ollama_url_edit.setPlaceholderText("http://localhost:11434")
         self._ollama_url_label = QLabel("Ollama URL:")
         form.addRow(self._ollama_url_label, self.ollama_url_edit)
+
+        # Gemini API Key (Gemini only)
+        self.gemini_key_edit = QLineEdit()
+        self.gemini_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.gemini_key_edit.setPlaceholderText("AIza...")
+        self._gemini_key_label = QLabel("Gemini API Key:")
+        form.addRow(self._gemini_key_label, self.gemini_key_edit)
 
         # Model row
         model_row = QHBoxLayout()
@@ -144,28 +151,42 @@ class ConfigDialog(QDialog):
         layout.addLayout(btn_row)
 
     def _on_provider_changed(self):
-        is_ollama = self.provider_combo.currentText() == "Ollama"
+        selected = self.provider_combo.currentText()
 
         # Save current combo text to the outgoing provider before switching
         current_model = self.model_combo.currentText().strip()
         if hasattr(self, "_active_provider"):
             if self._active_provider == "openrouter":
                 self._openrouter_model = current_model
-            else:
+            elif self._active_provider == "ollama":
                 self._ollama_model = current_model
+            elif self._active_provider == "gemini":
+                self._gemini_model = current_model
 
         # Update active provider and load its saved model
-        self._active_provider = "ollama" if is_ollama else "openrouter"
-        incoming = self._ollama_model if is_ollama else self._openrouter_model
+        provider_map = {"OpenRouter": "openrouter", "Ollama": "ollama", "Gemini": "gemini"}
+        self._active_provider = provider_map.get(selected, "openrouter")
+        model_map = {
+            "openrouter": self._openrouter_model,
+            "ollama": self._ollama_model,
+            "gemini": self._gemini_model,
+        }
+        incoming = model_map.get(self._active_provider, "")
         self.model_combo.clear()
         if incoming:
             self.model_combo.addItem(incoming)
         self.model_combo.setCurrentText(incoming)
 
-        self.api_key_edit.setVisible(not is_ollama)
-        self._api_key_label.setVisible(not is_ollama)
+        is_openrouter = selected == "OpenRouter"
+        is_ollama = selected == "Ollama"
+        is_gemini = selected == "Gemini"
+
+        self.api_key_edit.setVisible(is_openrouter)
+        self._api_key_label.setVisible(is_openrouter)
         self.ollama_url_edit.setVisible(is_ollama)
         self._ollama_url_label.setVisible(is_ollama)
+        self.gemini_key_edit.setVisible(is_gemini)
+        self._gemini_key_label.setVisible(is_gemini)
         self.test_status.setText("")
 
     def _load(self):
@@ -175,25 +196,33 @@ class ConfigDialog(QDialog):
         legacy = conf.get("model", "")
         self._openrouter_model = conf.get("openrouter_model", legacy or "deepseek/deepseek-v3.2")
         self._ollama_model = conf.get("ollama_model", "")
+        self._gemini_model = conf.get("gemini_model", "gemini-2.5-flash")
 
         provider = conf.get("provider", "openrouter")
         self._active_provider = provider
 
         # Populate combo with the active provider's model
-        active_model = self._ollama_model if provider == "ollama" else self._openrouter_model
+        model_map = {
+            "openrouter": self._openrouter_model,
+            "ollama": self._ollama_model,
+            "gemini": self._gemini_model,
+        }
+        active_model = model_map.get(provider, self._openrouter_model)
         self.model_combo.clear()
         if active_model:
             self.model_combo.addItem(active_model)
         self.model_combo.setCurrentText(active_model)
 
+        provider_labels = {"ollama": "Ollama", "gemini": "Gemini"}
         self.provider_combo.setCurrentText(
-            "Ollama" if provider == "ollama" else "OpenRouter"
+            provider_labels.get(provider, "OpenRouter")
         )
 
         self.api_key_edit.setText(conf.get("api_key", ""))
         self.ollama_url_edit.setText(
             conf.get("ollama_url", "http://localhost:11434")
         )
+        self.gemini_key_edit.setText(conf.get("gemini_api_key", ""))
 
         self.prompt_edit.setPlainText(conf.get("system_prompt", ""))
         self.max_tokens_spin.setValue(conf.get("max_tokens", 1024))
@@ -205,14 +234,18 @@ class ConfigDialog(QDialog):
         self._on_provider_changed()
 
     def _current_provider(self):
-        return "ollama" if self.provider_combo.currentText() == "Ollama" else "openrouter"
+        text = self.provider_combo.currentText()
+        return {"Ollama": "ollama", "Gemini": "gemini"}.get(text, "openrouter")
 
     def _refresh_models(self):
         provider = self._current_provider()
         api_key = self.api_key_edit.text().strip()
         ollama_url = self.ollama_url_edit.text().strip() or "http://localhost:11434"
+        gemini_key = self.gemini_key_edit.text().strip()
 
         if provider == "openrouter" and not api_key:
+            return
+        if provider == "gemini" and not gemini_key:
             return
 
         self.refresh_btn.setText("Loading...")
@@ -221,7 +254,8 @@ class ConfigDialog(QDialog):
         current = self.model_combo.currentText()
 
         def _fetch():
-            return fetch_models(api_key, provider=provider, ollama_url=ollama_url)
+            return fetch_models(api_key, provider=provider, ollama_url=ollama_url,
+                                gemini_api_key=gemini_key)
 
         def _on_done(models):
             self.model_combo.clear()
@@ -241,6 +275,7 @@ class ConfigDialog(QDialog):
         provider = self._current_provider()
         api_key = self.api_key_edit.text().strip()
         ollama_url = self.ollama_url_edit.text().strip() or "http://localhost:11434"
+        gemini_key = self.gemini_key_edit.text().strip()
 
         self.test_btn.setEnabled(False)
         self.test_status.setText("Testing...")
@@ -250,7 +285,7 @@ class ConfigDialog(QDialog):
 
         def _test():
             return test_connection(api_key, provider=provider, ollama_url=ollama_url,
-                                   model=model)
+                                   model=model, gemini_api_key=gemini_key)
 
         def _on_done(result):
             ok, message = result
@@ -271,14 +306,18 @@ class ConfigDialog(QDialog):
         conf["provider"] = self._current_provider()
         conf["api_key"] = self.api_key_edit.text().strip()
         conf["ollama_url"] = self.ollama_url_edit.text().strip() or "http://localhost:11434"
+        conf["gemini_api_key"] = self.gemini_key_edit.text().strip()
         # Save per-provider models
         active_model = self.model_combo.currentText().strip()
-        if self._active_provider == "openrouter":
-            conf["openrouter_model"] = active_model
-            conf["ollama_model"] = self._ollama_model
-        else:
-            conf["ollama_model"] = active_model
-            conf["openrouter_model"] = self._openrouter_model
+        all_models = {
+            "openrouter": self._openrouter_model,
+            "ollama": self._ollama_model,
+            "gemini": self._gemini_model,
+        }
+        all_models[self._active_provider] = active_model
+        conf["openrouter_model"] = all_models["openrouter"]
+        conf["ollama_model"] = all_models["ollama"]
+        conf["gemini_model"] = all_models["gemini"]
         conf.pop("model", None)
         conf["system_prompt"] = self.prompt_edit.toPlainText()
         conf["max_tokens"] = self.max_tokens_spin.value()
