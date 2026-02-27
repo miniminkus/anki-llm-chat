@@ -33,9 +33,17 @@ class StreamWorker(QThread):
         self.provider = provider
         self.ollama_url = ollama_url.rstrip("/")
         self._cancelled = False
+        self._response = None  # hold reference for socket cleanup
 
     def cancel(self):
         self._cancelled = True
+        # Close the underlying socket so the blocking read unblocks
+        resp = self._response
+        if resp is not None:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     def run(self):
         if self.provider == "openrouter" and not self.api_key:
@@ -68,7 +76,9 @@ class StreamWorker(QThread):
 
         full_response = ""
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            resp = urllib.request.urlopen(req, timeout=60)
+            self._response = resp
+            try:
                 for raw_line in resp:
                     if self._cancelled:
                         break
@@ -90,14 +100,24 @@ class StreamWorker(QThread):
                         )
                         if content:
                             full_response += content
-                            self.chunk_received.emit(content)
+                            if not self._cancelled:
+                                self.chunk_received.emit(content)
                     except (json.JSONDecodeError, KeyError, IndexError):
                         continue
+            finally:
+                self._response = None
+                try:
+                    resp.close()
+                except Exception:
+                    pass
 
         except urllib.error.HTTPError as e:
-            self.error_occurred.emit(_read_api_error(e))
+            if not self._cancelled:
+                self.error_occurred.emit(_read_api_error(e))
             return
         except (urllib.error.URLError, socket.timeout) as e:
+            if self._cancelled:
+                return
             reason = getattr(e, "reason", e)
             if isinstance(reason, socket.gaierror):
                 self.error_occurred.emit("No internet connection.")
@@ -107,10 +127,12 @@ class StreamWorker(QThread):
                 self.error_occurred.emit(f"Connection error: {reason}")
             return
         except Exception as e:
-            self.error_occurred.emit(str(e))
+            if not self._cancelled:
+                self.error_occurred.emit(str(e))
             return
 
-        self.stream_finished.emit(full_response)
+        if not self._cancelled:
+            self.stream_finished.emit(full_response)
 
 
 def fetch_models(api_key, provider="openrouter", ollama_url="http://localhost:11434"):

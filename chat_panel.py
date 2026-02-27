@@ -1,5 +1,7 @@
 """Chat panel – dockable side panel with streaming markdown chat."""
 
+import os
+
 from aqt import mw
 from aqt.qt import (
     QColor,
@@ -10,6 +12,7 @@ from aqt.qt import (
     QPalette,
     QPushButton,
     QTimer,
+    QUrl,
     QVBoxLayout,
     QWidget,
     Qt,
@@ -21,6 +24,8 @@ except ImportError:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from .api_client import StreamWorker
+
+_ADDON_DIR = os.path.dirname(__file__)
 
 MODULE = __name__.split(".")[0]
 
@@ -98,7 +103,7 @@ QPushButton#settingsBtn:hover {{ color: #555; }}
 
 _CHAT_HTML = """<!DOCTYPE html>
 <html><head><meta charset="utf-8">
-<script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
+<script src="markdown-it.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{
@@ -303,7 +308,7 @@ class ChatPanel(QDockWidget):
             .replace("PROVIDER_NAME", provider_label)
             .replace("MODEL_NAME", self._active_model(conf))
         )
-        self._web.setHtml(html)
+        self._web.setHtml(html, QUrl.fromLocalFile(_ADDON_DIR + "/"))
         self._web.loadFinished.connect(self._on_web_ready)
         layout.addWidget(self._web, stretch=1)
 
@@ -404,6 +409,8 @@ class ChatPanel(QDockWidget):
         """Match the input bar height to Anki's reviewer bottom bar."""
         def _sync():
             try:
+                if mw.state != "review":
+                    return
                 h = mw.reviewer.bottom.web.height()
                 if h > 0:
                     self._input_bar.setFixedHeight(h)
@@ -442,6 +449,10 @@ class ChatPanel(QDockWidget):
         text = self._input.text().strip()
         if not text:
             return
+
+        # Clean up any lingering worker from a previous request
+        if self._worker is not None:
+            self._cleanup_worker()
 
         self._input.clear()
         self._js(f'addUser("{_js(text)}");')
@@ -486,13 +497,13 @@ class ChatPanel(QDockWidget):
         self._set_streaming(False)
         if full:
             self._messages.append({"role": "assistant", "content": full})
-        self._worker = None
+        self._cleanup_worker()
 
     def _on_error(self, msg):
         self._js("finishAssistant();")
         self._set_streaming(False)
         self._js(f'addSystem("{_js(msg)}");')
-        self._worker = None
+        self._cleanup_worker()
 
     def _set_streaming(self, active):
         self._streaming = active
@@ -510,9 +521,25 @@ class ChatPanel(QDockWidget):
             self._input.setEnabled(True)
             self._input.setFocus()
 
+    def _cleanup_worker(self):
+        """Disconnect signals and wait for the worker thread to finish."""
+        w = self._worker
+        if w is None:
+            return
+        self._worker = None
+        try:
+            w.chunk_received.disconnect(self._on_chunk)
+            w.stream_finished.disconnect(self._on_finished)
+            w.error_occurred.disconnect(self._on_error)
+        except (TypeError, RuntimeError):
+            pass
+        if w.isRunning():
+            w.wait(3000)  # wait up to 3 s
+
     def _cancel_stream(self):
         if self._worker and self._streaming:
             self._worker.cancel()
+            self._cleanup_worker()
             self._js("finishAssistant();")
             self._set_streaming(False)
             self._js('addSystem("(stopped)");')

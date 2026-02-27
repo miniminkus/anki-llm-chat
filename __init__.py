@@ -39,10 +39,14 @@ def _setup():
     def on_review_end():
         panel.cleanup()
 
+    def on_profile_close():
+        panel.cleanup()
+
     gui_hooks.reviewer_did_show_question.append(on_question)
     gui_hooks.reviewer_did_show_answer.append(on_answer)
     gui_hooks.state_did_change.append(on_state_change)
     gui_hooks.reviewer_will_end.append(on_review_end)
+    gui_hooks.profile_will_close.append(on_profile_close)
 
     # -- menu toggle -------------------------------------------------------
 

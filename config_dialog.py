@@ -2,7 +2,6 @@
 
 from aqt import mw
 from aqt.qt import (
-    QApplication,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -13,10 +12,30 @@ from aqt.qt import (
     QPushButton,
     QSpinBox,
     QTextEdit,
+    QThread,
     QVBoxLayout,
+    pyqtSignal,
 )
 
 from .api_client import fetch_models, test_connection
+
+
+class _BgWorker(QThread):
+    """Run a callable in the background and deliver the result."""
+    done = pyqtSignal(object)
+
+    def __init__(self, fn, parent=None):
+        super().__init__(parent)
+        self._fn = fn
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        result = self._fn()
+        if not self._cancelled:
+            self.done.emit(result)
 
 MODULE = __name__.split(".")[0]
 
@@ -26,8 +45,22 @@ class ConfigDialog(QDialog):
         super().__init__(parent or mw)
         self.setWindowTitle("Card Assistant \u2014 Settings")
         self.setMinimumWidth(500)
+        self._bg: _BgWorker | None = None
         self._build_ui()
         self._load()
+
+    def done(self, result):
+        """Cancel any background thread before closing the dialog."""
+        if self._bg is not None:
+            self._bg.cancel()
+            try:
+                self._bg.done.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            # Thread will finish on its own; prevent parent-destroy crash
+            self._bg.setParent(None)
+            self._bg = None
+        super().done(result)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -184,19 +217,25 @@ class ConfigDialog(QDialog):
 
         self.refresh_btn.setText("Loading...")
         self.refresh_btn.setEnabled(False)
-        QApplication.processEvents()
 
         current = self.model_combo.currentText()
-        models = fetch_models(api_key, provider=provider, ollama_url=ollama_url)
 
-        self.model_combo.clear()
-        if models:
-            self.model_combo.addItems(models)
-        if current:
-            self.model_combo.setCurrentText(current)
+        def _fetch():
+            return fetch_models(api_key, provider=provider, ollama_url=ollama_url)
 
-        self.refresh_btn.setText("Refresh")
-        self.refresh_btn.setEnabled(True)
+        def _on_done(models):
+            self.model_combo.clear()
+            if models:
+                self.model_combo.addItems(models)
+            if current:
+                self.model_combo.setCurrentText(current)
+            self.refresh_btn.setText("Refresh")
+            self.refresh_btn.setEnabled(True)
+            self._bg = None
+
+        self._bg = _BgWorker(_fetch, self)
+        self._bg.done.connect(_on_done)
+        self._bg.start()
 
     def _test_connection(self):
         provider = self._current_provider()
@@ -206,18 +245,26 @@ class ConfigDialog(QDialog):
         self.test_btn.setEnabled(False)
         self.test_status.setText("Testing...")
         self.test_status.setStyleSheet("color: #888;")
-        QApplication.processEvents()
 
         model = self.model_combo.currentText().strip()
-        ok, message = test_connection(api_key, provider=provider, ollama_url=ollama_url,
-                                      model=model)
 
-        if ok:
-            self.test_status.setStyleSheet("color: #2e7d32;")
-        else:
-            self.test_status.setStyleSheet("color: #c62828;")
-        self.test_status.setText(message)
-        self.test_btn.setEnabled(True)
+        def _test():
+            return test_connection(api_key, provider=provider, ollama_url=ollama_url,
+                                   model=model)
+
+        def _on_done(result):
+            ok, message = result
+            if ok:
+                self.test_status.setStyleSheet("color: #2e7d32;")
+            else:
+                self.test_status.setStyleSheet("color: #c62828;")
+            self.test_status.setText(message)
+            self.test_btn.setEnabled(True)
+            self._bg = None
+
+        self._bg = _BgWorker(_test, self)
+        self._bg.done.connect(_on_done)
+        self._bg.start()
 
     def _save(self):
         conf = mw.addonManager.getConfig(MODULE) or {}
